@@ -1,0 +1,35 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Council outputs (generated at runtime)
+output/**
+!output/.gitkeep
+
+# Council packs (local only — security is the tracked example pack)
+config/councils/*
+!config/councils/security/
+!config/councils/security/**
+
+# Environment / secrets
+.env
+.env.*
+*.pem
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*~
