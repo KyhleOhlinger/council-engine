@@ -18,7 +18,7 @@ class RunContext:
     pack_name: str | None = None
     pack_description: str | None = None
     scenario_path: str | None = None
-    source_url: str | None = None
+    source_url: str | None = None  # optional; e.g. blog-triage packs with linked scenarios
     engine: str | None = None
     model: str | None = None
 

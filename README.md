@@ -12,7 +12,7 @@ Council Engine runs structured multi-agent debates against a document or scenari
 
 1. **Round 1** — each expert states an initial position
 2. **Round 2** — experts cite and challenge each other by name
-3. **Round 3** — each expert synthesizes agreement, tension, and recommendation
+3. **Round 3** — each expert synthesizes agreement, tension, and recommendation (brief prose only)
 4. **Council Synthesis** — an orchestrator pass produces a final verdict
 
 Two workflows are supported:
@@ -37,7 +37,7 @@ From [PAI Council](https://github.com/danielmiessler/Personal_AI_Infrastructure/
 | **QUICK** (30–50 word perspectives) | `workflow="quick"` with optional `auto_escalate=True` |
 | **Council Synthesis** (3+ convergence) | Separate orchestrator step using `synthesis_format.md` |
 
-### Standalone extension
+### Standalone extensions
 
 PAI uses **topic + freeform context**. This engine adds an **artifact review model** via packs:
 
@@ -46,14 +46,22 @@ PAI uses **topic + freeform context**. This engine adds an **artifact review mod
 
 The same engine code can review security blog posts, trade theses, architecture docs, etc. by swapping packs — no Python changes required.
 
+Additional standalone features beyond PAI:
+
+- **Pack-based domain config** — `current_state` + `ideal_state` per council
+- **Dual backends** — LiteLLM and Cursor SDK (`--engine litellm | cursor`)
+- **YAML front matter** — run metadata in a single machine-readable block at the top of each verdict
+- **Final Recommendation** — executive summary leads the verdict (replaces PAI's BLUF-style opening)
+- **Dated output files** — `output/<pack>/YYYY-MM-DD-<slug>-final_verdict.md`
+- **Appendix sanitization** — strips duplicate transcript sections and Round 3 verdict bloat from expert responses
+
 ## Project structure
 
 ```
 config/
 ├── _shared/synthesis_format_pai.md     # PAI default synthesis template
 └── councils/                           # Domain packs (the only thing that varies)
-    ├── security/
-    └── finance-trader/
+    └── security/                       # Tracked example pack (others are local/gitignored)
 council/                                # Domain-agnostic engine (importable package)
 ├── engine_base.py                      # Shared DEBATE/QUICK orchestration
 ├── engines.py                          # Backend factory (litellm | cursor)
@@ -62,9 +70,12 @@ council/                                # Domain-agnostic engine (importable pac
 ├── packs.py                            # Pack loading
 ├── compose.py                          # ComposeAgent equivalent
 ├── prompts.py                          # Round prompts
-├── transcript.py                       # Output formatting
+├── transcript.py                       # Output assembly, YAML front matter, sanitization
 ├── output.py                           # Path helpers
+├── constants.py                        # Token limits, expert count bounds
 └── cli.py                              # CLI entry point
+tests/
+└── test_pure_functions.py              # Unit tests for deterministic helpers
 output/<pack-name>/                     # Generated verdicts (gitignored)
 ```
 
@@ -80,6 +91,12 @@ python3 -m venv .venv && source .venv/bin/activate && pip install -e .
 
 ```bash
 pip3 install -e .
+```
+
+**Dev dependencies** (tests):
+
+```bash
+pip install -e ".[dev]"
 ```
 
 This installs the `council` package and registers the `council` CLI command. If the `council` script is not found, use `python3 -m council.cli` instead, or add your Python user `bin` directory to `PATH`.
@@ -105,6 +122,8 @@ Backends are loaded **lazily** — using `--engine cursor` does not import LiteL
 
 > **Apple Silicon note:** If `--engine litellm` fails with a `pydantic_core` architecture error on system Python, use a venv (`python3 -m venv .venv`) or run with `--engine cursor`.
 
+> **Cursor note:** The Cursor SDK ignores `max_tokens` on one-shot prompts; token limits apply to the LiteLLM backend only.
+
 ## CLI usage
 
 Run from the **project root** so pack paths (`config/councils/...`) resolve correctly.
@@ -113,14 +132,11 @@ Run from the **project root** so pack paths (`config/councils/...`) resolve corr
 # Security pack (default scenario: vpn-blog-post)
 python3 -m council.cli --council security --engine cursor
 
-# Finance trader pack
-python3 -m council.cli --council finance-trader --engine cursor
-
 # Specific scenario
 python3 -m council.cli --council security --scenario vpn-blog-post --engine cursor
 
 # Auto-compose domain experts at runtime (PAI ComposeAgent equivalent)
-python3 -m council.cli --council finance-trader --compose --engine cursor
+python3 -m council.cli --council security --compose --engine cursor
 
 # Quick check with auto-escalation to full debate
 python3 -m council.cli --council security --workflow quick --auto-escalate --engine cursor
@@ -135,6 +151,12 @@ Equivalent using the installed script (if on `PATH`):
 council --council security --scenario vpn-blog-post --engine cursor
 ```
 
+### Terminal output
+
+The CLI shows council progress (pack, engine, rounds, synthesis) via normal stdout and `council` logger messages at `INFO`. HTTP client libraries (`httpx`, `httpcore`, `litellm`, etc.) are capped at `WARNING` so request-level noise does not flood the terminal.
+
+Warnings still surface for issues like expert count outside 4–6 or when a QUICK run recommends escalation without `--auto-escalate`.
+
 ### Output
 
 Pack runs write dated markdown verdicts to:
@@ -143,9 +165,52 @@ Pack runs write dated markdown verdicts to:
 output/<pack-name>/YYYY-MM-DD-<topic-slug>-final_verdict.md
 ```
 
+If that path already exists, the engine appends `-2`, `-3`, etc.
+
 Example: `output/security/2026-06-15-why-you-need-to-stop-using-vpns-in-2026-final_verdict.md`
 
 Override with `--output` or `--output-dir`.
+
+#### Verdict document structure
+
+Each verdict is a single markdown file with this layout:
+
+```
+---
+date: "2026-06-15"
+topic: "..."
+workflow: debate
+pack: "security"
+pack_description: "..."
+scenario: "config/councils/security/scenarios/vpn-blog-post.md"
+engine: "cursor"
+model: "composer-2.5"
+council_members:
+  - name: "The Skeptic"
+    traits: "adversarial, meticulous"
+  - name: "The Builder"
+    traits: "pragmatic, systematic"
+---
+
+## Final Recommendation
+(Executive summary — priority tier, what to do now, what to defer, escalation conditions)
+
+---
+
+## Analysis & Recommendations
+(Structured synthesis per pack's synthesis_format.md)
+
+---
+
+## Appendix: Council Debate Transcript
+(Full Round 1–3 expert responses)
+```
+
+All run metadata lives in the YAML block. The body starts directly with **Final Recommendation** — there is no duplicate markdown metadata section.
+
+**Optional front-matter fields** are omitted when not set: `pack`, `pack_description`, `scenario`, `engine`, `model`, `escalated`, and `source_url`. Most councils do not need `source_url` — it is only included when a pack's scenario contains a link (e.g. blog-triage packs that review external posts). The CLI auto-extracts it via `extract_source_url()` when a `URL:` label or markdown link is present in the scenario; otherwise the field is left out entirely.
+
+For QUICK runs, the appendix is titled `## Appendix: Council Perspectives`. Escalated runs (`--auto-escalate`) add `escalated: true` to the front matter and preserve the superseded quick triage in the appendix.
 
 ### Manual paths (without a pack)
 
@@ -160,6 +225,14 @@ python3 -m council.cli \
   --engine cursor
 ```
 
+## Tests
+
+```bash
+python3 -m pytest tests/ -q
+```
+
+Tests cover slug generation, URL extraction, transcript sanitization, appendix stripping, and document assembly order — no API calls required.
+
 ## Using as a module
 
 Council Engine is a library first. The CLI is a thin wrapper around the same async API.
@@ -170,6 +243,7 @@ Council Engine is a library first. The CLI is a thin wrapper around the same asy
 import asyncio
 
 from council.engines import create_engine
+from council.transcript import RunContext
 
 async def main():
     engine = create_engine(
@@ -182,13 +256,20 @@ async def main():
         topic="Optional topic title",
         auto_escalate=False,
         model="composer-2.5",             # cursor default; litellm default is gpt-4o
+        run_context=RunContext(
+            pack_name="security",
+            pack_description="Security artifact review",
+            scenario_path="config/councils/security/scenarios/vpn-blog-post.md",
+            engine="cursor",
+            model="composer-2.5",
+        ),
     )
     return await engine.run()
 
 result = asyncio.run(main())
-# result["document"]   — full markdown output
-# result["transcript"] — header + round sections
-# result["synthesis"]  — final synthesis block
+# result["document"]   — full markdown output (YAML + synthesis + appendix)
+# result["transcript"] — appendix section only
+# result["synthesis"]  — Final Recommendation + analysis (no appendix)
 ```
 
 `run()` is **async**. Use `asyncio.run()` from a script, or call it directly inside an existing event loop (FastAPI, etc.).
@@ -202,6 +283,7 @@ from council.packs import load_pack, list_packs, resolve_scenario
 from council.compose import compose_council
 from council.output import resolve_output_path
 from council.prompts import extract_topic
+from council.transcript import RunContext
 
 # Backend classes load lazily (only when imported):
 from council import CursorCouncilDebate, LiteLLMCouncilDebate
@@ -249,6 +331,7 @@ import json
 
 from council.engines import create_engine
 from council.packs import load_pack, resolve_scenario
+from council.transcript import RunContext
 
 async def run_security_council():
     pack = load_pack("security")
@@ -261,6 +344,13 @@ async def run_security_council():
         synthesis_format=pack.synthesis_format.read_text(),
         experts=json.loads(pack.experts.read_text()),
         workflow="debate",
+        run_context=RunContext(
+            pack_name=pack.name,
+            pack_description=pack.description,
+            scenario_path=str(scenario),
+            engine="cursor",
+            model="composer-2.5",
+        ),
     )
     return await engine.run()
 
@@ -273,7 +363,6 @@ Equivalent to PAI's ComposeAgent step and the CLI's `--compose` flag:
 
 ```python
 import asyncio
-import json
 
 from council.compose import compose_council
 from council.engine_base import CouncilEngineBase
@@ -281,8 +370,8 @@ from council.engines import create_engine
 from council.packs import load_pack, resolve_scenario
 
 async def run_with_compose():
-    pack = load_pack("finance-trader")
-    scenario = resolve_scenario(pack, current=None, scenario=None)
+    pack = load_pack("security")
+    scenario = resolve_scenario(pack, current=None, scenario="vpn-blog-post")
 
     engine = create_engine(
         "cursor",
@@ -293,7 +382,7 @@ async def run_with_compose():
         workflow="debate",
     )
     engine.experts = await compose_council(
-        topic="NVDA earnings trade thesis",
+        topic="VPN blog post review",
         current_state=scenario.read_text(),
         ideal_state=pack.ideal_state.read_text(),
         complete=engine.complete,
@@ -308,9 +397,9 @@ asyncio.run(run_with_compose())
 ### Embedding notes
 
 - **No file output required** — the CLI writes `result["document"]` to disk; a host app can store it anywhere or return it over an API.
-- **Progress logging** — the engine prints round progress to stdout. Redirect or wrap if you need silent operation in production.
+- **Progress logging** — the engine logs round progress via the `council` logger at `INFO`. HTTP client loggers are silenced to `WARNING` in the CLI; configure loggers yourself when embedding.
 - **Lazy backends** — `create_engine("cursor", ...)` never loads LiteLLM. `LiteLLMCouncilDebate` only imports litellm when explicitly accessed.
-- **Expert schema** — each expert requires `name` and `persona`; `traits` is optional but recommended for transcript formatting.
+- **Expert schema** — each expert requires `name` and `persona`; `traits` is optional but recommended for transcript formatting and YAML front matter.
 
 ## Adding a pack
 
@@ -321,6 +410,8 @@ asyncio.run(run_with_compose())
 
 No Python changes required.
 
+> **Git note:** Only `config/councils/security/` is tracked in git. Other packs under `config/councils/` are gitignored by default so you can keep local domain councils without committing them. Generated verdicts under `output/` are also gitignored (except `output/.gitkeep`).
+
 ## Pack files
 
 | File | PAI equivalent | Purpose |
@@ -329,8 +420,10 @@ No Python changes required.
 | `experts.json` | ComposeAgent output | Council personas |
 | `council_members.md` | CouncilMembers.md | Composition guidance for `--compose` / `compose_council()` |
 | `ideal_state.md` | — | Target standard (standalone extension) |
-| `synthesis_format.md` | OutputFormat.md | Verdict structure |
+| `synthesis_format.md` | OutputFormat.md | Verdict structure (lead with `## Final Recommendation`) |
 | `scenarios/*.md` | Topic context | Artifact under review per run |
+
+Some packs (e.g. blog triage) include a `URL:` line or markdown link in scenarios so the CLI can populate optional `source_url` front matter. That is a pack convention, not an engine requirement.
 
 ## Source
 
