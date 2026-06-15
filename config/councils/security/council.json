@@ -1,0 +1,9 @@
+{
+  "name": "security",
+  "description": "Security review council for blog posts, policies, and security advice",
+  "ideal_state": "ideal_state.md",
+  "synthesis_format": "synthesis_format.md",
+  "experts": "experts.json",
+  "council_members": "council_members.md",
+  "default_scenario": "scenarios/vpn-blog-post.md"
+}

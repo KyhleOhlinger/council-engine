@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "standalone-council"
+version = "0.2.0"
+requires-python = ">=3.11"
+readme = "README.md"
+dependencies = [
+    "cursor-sdk",
+    "litellm",
+]
+
+[project.scripts]
+council = "council.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["council*"]
