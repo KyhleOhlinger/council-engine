@@ -12,8 +12,16 @@ dependencies = [
     "litellm",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
 [project.scripts]
 council = "council.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["council*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

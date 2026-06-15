@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import warnings
 from abc import ABC, abstractmethod
@@ -13,6 +14,7 @@ from .constants import (
     MAX_EXPERTS,
     MIN_EXPERTS,
     QUICK_MAX_TOKENS,
+    ROUND_3_MAX_TOKENS,
     SYNTHESIS_MAX_TOKENS,
 )
 from .output import fill_run_variables
@@ -26,14 +28,16 @@ from .prompts import (
     extract_topic,
 )
 from .transcript import (
+    RunContext,
     assemble_debate_output,
+    assemble_escalated_output,
     assemble_quick_output,
-    format_debate_header,
-    format_quick_header,
     format_quick_perspectives,
     format_round_section,
     round_label,
 )
+
+logger = logging.getLogger("council")
 
 _ESCALATION_PATTERNS = (
     r"need full debate",
@@ -67,6 +71,7 @@ class CouncilEngineBase(ABC):
         run_date: date | None = None,
         auto_escalate: bool = False,
         validate_experts: bool = True,
+        run_context: RunContext | None = None,
     ):
         if validate_experts:
             self._validate_experts(experts)
@@ -78,6 +83,7 @@ class CouncilEngineBase(ABC):
         self.experts = experts
         self.workflow = workflow
         self.auto_escalate = auto_escalate
+        self.run_context = run_context or RunContext()
         self.round_sections: list[str] = []
 
     @staticmethod
@@ -110,52 +116,69 @@ class CouncilEngineBase(ABC):
             return await self._run_quick()
         return await self._run_debate()
 
-    async def _run_debate(self) -> dict[str, str]:
-        print(f"Starting Council Debate ({len(self.experts)} members, 3 rounds)...")
-        header = format_debate_header(self.topic, self.experts, self.run_date)
-        print(header)
-
+    async def _debate_core(self) -> tuple[str, list[str]]:
+        logger.info("Starting Council Debate (%d members, 3 rounds)...", len(self.experts))
         for round_num in (1, 2, 3):
             self.round_sections.append(await self._run_round(round_num))
-
-        print("Synthesizing Council Verdict...")
+        logger.info("Synthesizing Council Verdict...")
         synthesis = await self._synthesize_debate()
-        return assemble_debate_output(header, self.round_sections, synthesis)
+        return synthesis, self.round_sections
+
+    async def _run_debate(self) -> dict[str, str]:
+        synthesis, round_sections = await self._debate_core()
+        return assemble_debate_output(
+            self.topic,
+            self.run_date,
+            self.experts,
+            round_sections,
+            synthesis,
+            context=self.run_context,
+        )
 
     async def _run_quick(self) -> dict[str, str]:
-        print(f"Starting Quick Council ({len(self.experts)} members, 1 round)...")
-        header = format_quick_header(self.topic, self.experts, self.run_date)
-        print(header)
-
+        logger.info("Starting Quick Council (%d members, 1 round)...", len(self.experts))
         responses = await self._gather(
             self._build_quick_prompt,
             max_tokens=QUICK_MAX_TOKENS,
         )
         perspectives = format_quick_perspectives(list(zip(self.experts, responses, strict=True)))
 
-        print("Synthesizing Quick Summary...")
+        logger.info("Synthesizing Quick Summary...")
         summary = await self._synthesize_quick(perspectives)
-        result = assemble_quick_output(header, perspectives, summary)
+
+        if _should_escalate(summary) and self.auto_escalate:
+            logger.info("Auto-escalating to full DEBATE workflow...")
+            self.round_sections.clear()
+            debate_synthesis, round_sections = await self._debate_core()
+            return assemble_escalated_output(
+                self.topic,
+                self.run_date,
+                self.experts,
+                round_sections,
+                debate_synthesis,
+                summary,
+                perspectives,
+                context=self.run_context,
+            )
 
         if _should_escalate(summary):
-            print(f"\n⚠️  {_escalation_notice()}")
-            if self.auto_escalate:
-                print("Auto-escalating to full DEBATE workflow...\n")
-                self.round_sections.clear()
-                debate_result = await self._run_debate()
-                debate_result["document"] = (
-                    f"{result['document']}\n\n---\n\n## Escalation\n\n"
-                    f"{_escalation_notice()}\n\n{debate_result['document']}"
-                )
-                return debate_result
+            logger.warning("%s", _escalation_notice())
 
-        return result
+        return assemble_quick_output(
+            self.topic,
+            self.run_date,
+            self.experts,
+            perspectives,
+            summary,
+            context=self.run_context,
+        )
 
     async def _run_round(self, round_num: int) -> str:
-        print(f"Executing {round_label(round_num)}...")
+        logger.info("Executing %s...", round_label(round_num))
+        token_cap = ROUND_3_MAX_TOKENS if round_num == 3 else DEBATE_MAX_TOKENS
         responses = await self._gather(
             lambda agent: self._build_round_prompt(agent, round_num),
-            max_tokens=DEBATE_MAX_TOKENS,
+            max_tokens=token_cap,
         )
         return format_round_section(
             round_num,

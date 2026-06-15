@@ -6,6 +6,8 @@ and target standard. Round prompts follow PAI Council Workflows/Debate.md and Qu
 
 from __future__ import annotations
 
+import re
+
 from .constants import (
     DEBATE_WORDS_MAX,
     DEBATE_WORDS_MIN,
@@ -23,6 +25,29 @@ def extract_topic(current_state: str) -> str:
     if current_state.strip():
         return current_state.strip().splitlines()[0][:120]
     return "Council Review"
+
+
+def extract_source_url(current_state: str) -> str | None:
+    # Prefer an explicit "URL:" label (with or without markdown bold / link wrapping).
+    labelled = re.search(
+        r"\bURL\b\s*[:*]*\s*\[?<?(https?://[^\s\])>]+)",
+        current_state,
+        re.IGNORECASE,
+    )
+    if labelled:
+        return labelled.group(1)
+    # Fallback: first markdown link target.
+    link = re.search(r"\]\((https?://[^\s)]+)\)", current_state)
+    if link:
+        return link.group(1)
+    return None
+
+
+_RESPONSE_STYLE = """
+Response formatting:
+- Do NOT include your name, role, or round number as a heading
+- Speak directly in first person; the transcript already labels you
+"""
 
 
 def agent_preamble(agent: dict) -> str:
@@ -54,6 +79,7 @@ Give your initial position on this topic from your specialized perspective.
 - Be specific and substantive ({DEBATE_WORDS_MIN}-{DEBATE_WORDS_MAX} words)
 - State your key concern, recommendation, or insight
 - You'll respond to other council members in Round 2
+{_RESPONSE_STYLE}
 """
 
 
@@ -80,6 +106,19 @@ Now respond to the other council members:
 - {DEBATE_WORDS_MIN}-{DEBATE_WORDS_MAX} words
 
 The value is in genuine intellectual friction -- engage with their actual arguments.
+{_RESPONSE_STYLE}
+"""
+
+
+_ROUND_3_STYLE = """
+Round 3 response rules (strict):
+- Write a brief closing synthesis in plain prose — NOT a full executive report
+- Maximum {max_words} words total
+- Do NOT use markdown section headings (no ## or ### titles)
+- Do NOT output a "Final Recommendation" block, priority tier label, tables, numbered action lists, or MITRE mappings
+- Do NOT reproduce blog breakdown, detection tables, actionable items, or organizational relevance sections
+- Do NOT include an Appendix or placeholder text such as "included in user context above"
+- Cover only: where the council agrees, where you still disagree, and your bottom-line recommendation
 """
 
 
@@ -111,6 +150,8 @@ Final synthesis from your perspective:
 - {DEBATE_WORDS_MIN}-{DEBATE_WORDS_MAX} words
 
 Be honest about remaining disagreements -- forced consensus is worse than acknowledged tension.
+{_ROUND_3_STYLE.format(max_words=DEBATE_WORDS_MAX)}
+{_RESPONSE_STYLE}
 """
 
 
@@ -126,6 +167,7 @@ Give your immediate take from your specialized perspective:
 - Be direct and specific
 
 This is a quick sanity check, not a full debate.
+{_RESPONSE_STYLE}
 """
 
 
@@ -153,10 +195,15 @@ Required Output Format:
 {synthesis_format}
 
 Additional synthesis rules:
+- Lead with Final Recommendation — assume the reader only reads the first screen
+- The Final Recommendation must be a complete executive summary on its own
 - Areas of convergence require agreement from at least {threshold} council members
 - Remaining disagreements must acknowledge unresolved trade-offs honestly
 - The recommended path must be actionable and grounded in the debate transcript
 - Do not invent arguments that were not raised in the transcript
+- Do not repeat the Final Recommendation verbatim in later sections
+- Do NOT reproduce the debate transcript, an Appendix, or round-by-round sections; the transcript is appended separately
+- Do NOT quote or paraphrase Round 3 expert responses at length; summarize tensions and decisions only
 """
 
 
@@ -175,11 +222,14 @@ Perspectives:
 
 Output exactly this markdown structure:
 
-### Quick Summary
+## Final Recommendation
+**Recommendation:** [Proceed / Reconsider / Need full debate]
 
+(2-3 sentences — bottom line for a busy reader. State what to do next and what would trigger a full debate.)
+
+## Quick Analysis
 **Consensus:** [Do they generally agree? On what?]
 **Concerns:** [Any red flags raised?]
-**Recommendation:** [Proceed / Reconsider / Need full debate]
 
 If significant disagreement or complex trade-offs exist, note that a full 3-round council debate is warranted.
 """

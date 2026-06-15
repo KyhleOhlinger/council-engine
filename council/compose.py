@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable
+from typing import Protocol
 
-from .constants import DEFAULT_PERSPECTIVE_SLOTS, OPTIMAL_EXPERTS
+from .constants import COMPOSE_MAX_TOKENS, DEFAULT_PERSPECTIVE_SLOTS, OPTIMAL_EXPERTS
 
-CompleteFn = Callable[[str, int | None], Awaitable[str]]
+
+class CompleteFn(Protocol):
+    def __call__(self, prompt: str, *, max_tokens: int | None = None) -> Awaitable[str]: ...
 
 
 def build_compose_prompt(
@@ -75,5 +78,5 @@ async def compose_council(
     prompt = build_compose_prompt(
         topic, current_state, ideal_state, expert_count, compose_guide
     )
-    raw = await complete(prompt, max_tokens=1500)
+    raw = await complete(prompt, max_tokens=COMPOSE_MAX_TOKENS)
     return parse_experts_response(raw)

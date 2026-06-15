@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import json
+import logging
 from datetime import date
 from pathlib import Path
 
@@ -10,9 +11,28 @@ from .engine_base import CouncilEngineBase
 from .engines import create_engine
 from .output import resolve_output_path
 from .packs import CouncilPack, list_packs, load_pack, resolve_scenario
-from .prompts import extract_topic
+from .prompts import extract_source_url, extract_topic
+from .transcript import RunContext
 
 SHARED_FORMAT = Path(DEFAULT_SYNTHESIS_FORMAT)
+
+_NOISY_LOGGERS = (
+    "httpx",
+    "httpcore",
+    "litellm",
+    "openai",
+    "urllib3",
+    "hpack",
+    "cursor",
+)
+
+
+def configure_logging() -> None:
+    """Show council progress; silence HTTP client request noise only."""
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logging.getLogger("council").setLevel(logging.INFO)
+    for name in _NOISY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def resolve_paths(args) -> tuple[CouncilPack | None, dict]:
@@ -49,7 +69,6 @@ def resolve_paths(args) -> tuple[CouncilPack | None, dict]:
 
 async def run(args, paths: dict, engine_kwargs: dict) -> dict[str, str]:
     engine_kwargs["validate_experts"] = not (args.compose and not engine_kwargs["experts"])
-    engine_kwargs["model"] = args.model or ("composer-2.5" if args.engine == "cursor" else "gpt-4o")
 
     print(f"🔌 Routing to {'Cursor SDK' if args.engine == 'cursor' else 'LiteLLM'} Engine...")
     debate = create_engine(args.engine, workflow=args.workflow, **engine_kwargs)
@@ -71,6 +90,7 @@ async def run(args, paths: dict, engine_kwargs: dict) -> dict[str, str]:
 
 
 def main():
+    configure_logging()
     packs = list_packs()
     parser = argparse.ArgumentParser(description="PAI Council — multi-agent collaborative debate.")
     parser.add_argument("--council", choices=packs, help=f"Pack: {', '.join(packs)}")
@@ -105,6 +125,7 @@ def main():
     topic = args.topic or extract_topic(current_state)
     run_date = date.today()
     output_path = resolve_output_path(topic, paths["output_dir"], args.output, run_date)
+    model = args.model or ("composer-2.5" if args.engine == "cursor" else "gpt-4o")
 
     print(f"📅 Date: {run_date.isoformat()}\n📋 Topic: {topic}\n📄 Output: {output_path}")
 
@@ -116,6 +137,15 @@ def main():
         "topic": topic,
         "run_date": run_date,
         "auto_escalate": args.auto_escalate,
+        "model": model,
+        "run_context": RunContext(
+            pack_name=pack.name if pack else None,
+            pack_description=pack.description if pack else None,
+            scenario_path=str(paths["current"]),
+            source_url=extract_source_url(current_state),
+            engine=args.engine,
+            model=model,
+        ),
     }
 
     results = asyncio.run(run(args, paths, engine_kwargs))
