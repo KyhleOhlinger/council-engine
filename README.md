@@ -1,5 +1,8 @@
 # Council Engine
 
+<img width="1376" height="768" alt="council-engine-image" src="https://github.com/user-attachments/assets/91e28695-a9f9-41c2-bef8-79046533182d" />
+
+
 A standalone Python library and CLI implementing the [PAI Council](https://github.com/danielmiessler/Personal_AI_Infrastructure/tree/main/Packs/Council) workflow — multi-agent collaborative debate with genuine intellectual friction.
 
 Use it from the terminal, or import it into a larger Python application.
