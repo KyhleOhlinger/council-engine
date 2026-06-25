@@ -127,7 +127,12 @@ def main():
     output_path = resolve_output_path(topic, paths["output_dir"], args.output, run_date)
     model = args.model or ("composer-2.5" if args.engine == "cursor" else "gpt-4o")
 
-    print(f"📅 Date: {run_date.isoformat()}\n📋 Topic: {topic}\n📄 Output: {output_path}")
+    print(
+        f"📅 Date: {run_date.isoformat()}\n"
+        f"📄 Scenario: {paths['current']}\n"
+        f"📋 Topic: {topic}\n"
+        f"💾 Output: {output_path}"
+    )
 
     engine_kwargs = {
         "current_state": current_state,

@@ -21,16 +21,57 @@ class CouncilPack:
     default_scenario: Path | None
     output_dir: Path
 
-    def scenario_path(self, scenario: str) -> Path:
-        candidate = Path(scenario)
-        if candidate.is_absolute() or candidate.exists():
-            return candidate
-        return self.root / "scenarios" / scenario
+    @property
+    def scenarios_dir(self) -> Path:
+        return self.root / "scenarios"
+
+    def list_scenarios(self) -> list[str]:
+        if not self.scenarios_dir.exists():
+            return []
+        return sorted(path.stem for path in self.scenarios_dir.glob("*.md"))
 
     def read_compose_guide(self) -> str | None:
         if self.council_members and self.council_members.exists():
             return self.council_members.read_text(encoding="utf-8")
         return None
+
+
+def _is_explicit_path(value: str) -> bool:
+    """True when the user supplied a path, not a bare scenario slug."""
+    candidate = Path(value)
+    return candidate.is_absolute() or len(candidate.parts) > 1
+
+
+def _find_scenario_in_pack(pack: CouncilPack, name: str) -> Path | None:
+    """Resolve a scenario slug to a file under the pack scenarios/ directory."""
+    stem = Path(name).stem.lower()
+    scenarios_dir = pack.scenarios_dir
+    if not scenarios_dir.exists():
+        return None
+
+    for path in scenarios_dir.glob("*.md"):
+        if path.stem.lower() == stem:
+            return path
+    return None
+
+
+def resolve_scenario_path(pack: CouncilPack, value: str) -> Path:
+    """Resolve --scenario or --current to a concrete scenario file."""
+    if _is_explicit_path(value):
+        path = Path(value)
+        if not path.suffix:
+            path = path.with_suffix(".md")
+        if path.exists():
+            return path
+        raise FileNotFoundError(f"Scenario not found: {path}")
+
+    path = _find_scenario_in_pack(pack, value)
+    if path is not None:
+        return path
+
+    available = pack.list_scenarios()
+    hint = f" Available: {', '.join(available)}" if available else ""
+    raise FileNotFoundError(f"Scenario not found: {pack.scenarios_dir / Path(value).stem}.md.{hint}")
 
 
 def list_packs() -> list[str]:
@@ -70,21 +111,16 @@ def load_pack(name: str) -> CouncilPack:
 
 
 def resolve_scenario(pack: CouncilPack, current: str | None, scenario: str | None) -> Path:
+    if current and scenario and current != scenario:
+        raise ValueError(
+            f"Provide only one of --current or --scenario, not both "
+            f"(got --current {current!r} and --scenario {scenario!r})."
+        )
+
     if scenario:
-        path = pack.scenario_path(scenario)
-        if not path.suffix:
-            path = path.with_suffix(".md")
-        if not path.exists():
-            raise FileNotFoundError(f"Scenario not found: {path}")
-        return path
+        return resolve_scenario_path(pack, scenario)
     if current:
-        path = Path(current)
-        if path.exists():
-            return path
-        relative = pack.scenario_path(current)
-        if relative.exists():
-            return relative
-        raise FileNotFoundError(f"Current state file not found: {path}")
+        return resolve_scenario_path(pack, current)
     if pack.default_scenario and pack.default_scenario.exists():
         return pack.default_scenario
     raise ValueError(f"Provide --current or --scenario for pack '{pack.name}'.")
